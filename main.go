@@ -63,7 +63,7 @@ func chatLoop(cfg config.Config, client *ollama.Client) {
 
 func handleInput(cfg config.Config, client *ollama.Client, input string) {
 	// Deterministic commands (file search, etc.) skip the LLM entirely.
-	if res := router.TryHandle(input); res.Handled {
+	if res := router.TryHandle(input, cfg); res.Handled { // <- tambah `cfg` di sini
 		fmt.Println("George:", res.Output)
 		return
 	}
