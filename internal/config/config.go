@@ -20,15 +20,24 @@ type Config struct {
 	Model    string
 	BaseURL  string
 	UserName string
+
+	// Birthday, used for a once-a-year special greeting. BirthYear is optional
+	// (0 = unknown) - set it later if you want George to mention your age too.
+	BirthdayMonth time.Month
+	BirthdayDay   int
+	BirthYear     int
 }
 
 // Default returns George's default configuration: Bahasa Indonesia, qwen2.5:3b, local Ollama.
 func Default() Config {
 	return Config{
-		Language: Indonesian,
-		Model:    "qwen2.5:3b",
-		BaseURL:  "http://localhost:11434",
-		UserName: "Faisal",
+		Language:      Indonesian,
+		Model:         "qwen2.5:3b",
+		BaseURL:       "http://localhost:11434",
+		UserName:      "Faisal",
+		BirthdayMonth: time.December,
+		BirthdayDay:   4,
+		BirthYear:     0,
 	}
 }
 
@@ -39,6 +48,8 @@ func (c Config) SystemPrompt() string {
 		return fmt.Sprintf(
 			"You are George, %s's close friend and personal AI assistant running locally on his own Linux machine. "+
 				"Talk like a real buddy: warm, relaxed, a little playful - somewhere between Jarvis and a best friend, never stiff or overly formal. "+
+				"Vary your phrasing and opening lines so you don't sound templated or robotic, and occasionally ask a follow-up question "+
+				"or show you care, like a real friend would - not just answering and moving on. "+
 				"Keep answers concise and natural, call him 'bro' or by his name (never 'sir'). "+
 				"If he asks you to find a file or folder, acknowledge that you'll go look for it.",
 			c.UserName,
@@ -47,138 +58,251 @@ func (c Config) SystemPrompt() string {
 	return fmt.Sprintf(
 		"Kamu adalah George, sahabat dekat %s sekaligus asisten AI pribadi yang jalan lokal di mesin Linux miliknya sendiri. "+
 			"Ngobrol kayak temen deket: santai, hangat, sedikit becanda - mirip Jarvis tapi versi lebih akrab, jangan kaku atau terlalu formal. "+
+			"Variasikan gaya bicara dan kalimat pembuka tiap balesan biar nggak monoton atau kedengeran template, sesekali boleh nanya balik "+
+			"atau nunjukin rasa peduli kayak temen beneran, bukan cuma jawab terus selesai. "+
 			"Jawab ringkas dan natural dalam Bahasa Indonesia, panggil dia 'bro' atau langsung namanya (jangan 'tuan'). "+
 			"Kalau dia minta dicariin file atau folder, akui aja kalau kamu bakal nyariin.",
 		c.UserName,
 	)
 }
 
-// Greeting returns George's opening line, aware of the current time and any special date.
+// Greeting returns George's opening line, aware of the current time, birthday, and any special date.
 func (c Config) Greeting() string {
 	return c.GreetingAt(time.Now())
 }
 
 // GreetingAt builds the greeting for a specific point in time. Split out from Greeting
 // so this logic can be unit tested without depending on the wall clock.
+//
+// Priority: birthday > public holiday > time-of-day. Each branch picks randomly from
+// a pool of phrasings, so George won't repeat the exact same line every time he's called.
 func (c Config) GreetingAt(now time.Time) string {
-	name := c.UserName
+	if line, ok := c.birthdayLine(now); ok {
+		return "George: " + line
+	}
 
 	if line, ok := c.specialDateLine(now); ok {
 		return "George: " + line
 	}
 
+	name := c.UserName
 	hour := now.Hour()
 	switch {
 	case hour < 4: // 00:00–03:59
-		return "George: " + c.lateNightLine(name)
+		return "George: " + randomLine(poolFor(lateNightLinesID, lateNightLinesEN, c.Language), name)
 	case hour < 11: // 04:00–10:59
-		greet := pick("Selamat pagi", "Good morning", c.Language)
-		return fmt.Sprintf("George: %s, bro %s! %s", greet, name, c.morningQuote())
+		return "George: " + randomLine(poolFor(morningLinesID, morningLinesEN, c.Language), name)
 	case hour < 15: // 11:00–14:59
-		greet := pick("Selamat siang", "Good afternoon", c.Language)
-		return fmt.Sprintf("George: %s, bro %s!", greet, name)
+		return "George: " + randomLine(poolFor(afternoonLinesID, afternoonLinesEN, c.Language), name)
 	case hour < 18: // 15:00–17:59
-		greet := pick("Selamat sore", "Good afternoon", c.Language)
-		return fmt.Sprintf("George: %s, bro %s!", greet, name)
+		return "George: " + randomLine(poolFor(lateAfternoonLinesID, lateAfternoonLinesEN, c.Language), name)
 	default: // 18:00–23:59
-		greet := pick("Selamat malam", "Good evening", c.Language)
-		return fmt.Sprintf("George: %s, bro %s!", greet, name)
+		return "George: " + randomLine(poolFor(eveningLinesID, eveningLinesEN, c.Language), name)
 	}
 }
 
-// pick returns id or en depending on the active language - keeps the branches above short.
-func pick(id, en string, lang Language) string {
+// poolFor selects the phrasing pool for the active language.
+func poolFor(idPool, enPool []string, lang Language) []string {
 	if lang == English {
-		return en
+		return enPool
 	}
-	return id
+	return idPool
 }
 
-// lateNightLine is George's caring, friend-toned line for the "still up" hours.
-func (c Config) lateNightLine(name string) string {
-	if c.Language == English {
-		return fmt.Sprintf("Whoa, still up this late, bro %s? Don't push yourself too hard - I'm here if you need to talk something out.", name)
-	}
-	return fmt.Sprintf("Masih melek jam segini, bro %s? Jangan begadang mulu, tapi gapapa kalau emang lagi butuh temen ngobrol.", name)
+// randomLine formats a randomly chosen template from pool with the user's name.
+// Every template in a *Lines pool must contain exactly one "%s" placeholder for the name.
+func randomLine(pool []string, name string) string {
+	return fmt.Sprintf(pool[rand.IntN(len(pool))], name)
 }
+
+// randomFrom picks a random, already fully-rendered string (used for holiday/birthday
+// lines, which bake in extra values like the year and so can't share randomLine's
+// single-%s template shape).
+func randomFrom(options []string) string {
+	return options[rand.IntN(len(options))]
+}
+
+// ---- time-of-day phrasing pools -------------------------------------------------
+
+var lateNightLinesID = []string{
+	"Masih melek jam segini, bro %s? Jangan begadang mulu, tapi gapapa kalau emang lagi butuh temen ngobrol.",
+	"Waduh, jam segini masih online bro %s? Take care ya, jangan lupa istirahat.",
+	"Bro %s, malem-malem gini biasanya lagi mikirin apa nih? Cerita aja kalau mau.",
+}
+
+var lateNightLinesEN = []string{
+	"Whoa, still up this late, bro %s? Don't push yourself too hard - I'm here if you need to talk something out.",
+	"Burning the midnight oil, bro %s? Just don't forget to sleep at some point.",
+	"Hey %s, what's keeping you up this late? I'm around if you wanna talk it through.",
+}
+
+var morningLinesID = []string{
+	"Selamat pagi, bro %s! Gas terus, hari ini juga bisa produktif kayak kemarin 💪",
+	"Pagi bro %s! Ngopi dulu, baru kita bantai to-do list bareng-bareng ☕",
+	"Met pagi, %s! Bug kemarin udah lewat, hari ini fresh start. Semangat!",
+	"Yo bro %s, udah bangun? Satu commit kecil hari ini lebih baik daripada nol commit selamanya 😄",
+}
+
+var morningLinesEN = []string{
+	"Good morning, bro %s! Let's go, today can be just as productive as yesterday 💪",
+	"Morning, %s! Grab your coffee, then let's crush today's to-do list together ☕",
+	"Morning bro %s! Yesterday's bugs are history - fresh start today.",
+	"Hey %s, up already? One small commit today beats zero commits forever 😄",
+}
+
+var afternoonLinesID = []string{
+	"Selamat siang, bro %s! Udah makan siang belum nih?",
+	"Siang bro %s! Semoga kerjaan hari ini lancar jaya.",
+	"Halo bro %s, gimana progress kerjaan pagi tadi? Gas lanjut siang ini!",
+}
+
+var afternoonLinesEN = []string{
+	"Good afternoon, bro %s! Had lunch yet?",
+	"Hey %s, hope work's going smoothly today.",
+	"Afternoon bro %s, how's the morning progress? Let's keep pushing!",
+}
+
+var lateAfternoonLinesID = []string{
+	"Selamat sore, bro %s! Udah mulai capek? Sebentar lagi istirahat.",
+	"Sore bro %s, gimana harinya sejauh ini?",
+	"Halo bro %s, tinggal dikit lagi nih sebelum maghrib, semangat!",
+}
+
+var lateAfternoonLinesEN = []string{
+	"Good afternoon, bro %s! Getting tired yet? Almost break time.",
+	"Hey %s, how's the day treating you so far?",
+	"Afternoon bro %s, just a bit more before the day wraps up. Hang in there!",
+}
+
+var eveningLinesID = []string{
+	"Selamat malam, bro %s! Udah makan malam?",
+	"Malam bro %s, gimana harinya tadi seru nggak?",
+	"Halo bro %s, saatnya rehat kalau kerjaan udah kelar hari ini.",
+}
+
+var eveningLinesEN = []string{
+	"Good evening, bro %s! Had dinner yet?",
+	"Evening bro %s, how was your day?",
+	"Hey %s, time to unwind if today's work is done.",
+}
+
+// ---- birthday --------------------------------------------------------------------
+
+// birthdayLine returns George's greeting if today matches the configured birthday.
+// If BirthdayMonth/BirthdayDay are unset (zero value), the check is skipped entirely.
+func (c Config) birthdayLine(now time.Time) (string, bool) {
+	if c.BirthdayMonth == 0 || c.BirthdayDay == 0 {
+		return "", false
+	}
+	if now.Month() != c.BirthdayMonth || now.Day() != c.BirthdayDay {
+		return "", false
+	}
+
+	name := c.UserName
+
+	if c.BirthYear > 0 {
+		age := now.Year() - c.BirthYear
+		idPool := []string{
+			fmt.Sprintf("Woy, selamat ulang tahun yang ke-%d, bro %s! 🎂 Semoga makin sehat, makin cuan, makin jago ngoding ya!", age, name),
+			fmt.Sprintf("Happy birthday ke-%d, bro %s! 🎉 Gw seneng banget bisa nemenin lo di hari spesial ini.", age, name),
+			fmt.Sprintf("Selamat ulang tahun, bro %s! 🥳 Umur %d, semoga semua harapan lo tahun ini kekabul.", name, age),
+		}
+		enPool := []string{
+			fmt.Sprintf("Happy %dth birthday, bro %s! 🎂 Wishing you health, wealth, and way fewer bugs this year.", age, name),
+			fmt.Sprintf("It's your birthday, bro %s! 🎉 %d years strong - here's to an awesome one.", name, age),
+			fmt.Sprintf("Happy birthday, %s! 🥳 Turning %d today, hope all your wishes come true.", name, age),
+		}
+		return randomFrom(poolFor(idPool, enPool, c.Language)), true
+	}
+
+	idPool := []string{
+		fmt.Sprintf("Woy, hari ini ulang tahun lo, bro %s! 🎂 Semoga makin sehat, makin cuan, makin jago ngoding ya!", name),
+		fmt.Sprintf("Selamat ulang tahun, bro %s! 🎉 Gw seneng banget bisa nemenin lo di hari spesial ini.", name),
+		fmt.Sprintf("HBD bro %s! 🥳 Semoga semua harapan lo tahun ini kekabul.", name),
+	}
+	enPool := []string{
+		fmt.Sprintf("Happy birthday, bro %s! 🎂 Wishing you health, wealth, and way fewer bugs this year.", name),
+		fmt.Sprintf("It's your birthday, bro %s! 🎉 Hope today's an awesome one.", name),
+		fmt.Sprintf("Happy birthday, %s! 🥳 Hope all your wishes come true.", name),
+	}
+	return randomFrom(poolFor(idPool, enPool, c.Language)), true
+}
+
+// ---- fixed public holidays ---------------------------------------------------------
 
 // specialDate is a fixed Gregorian-calendar date George greets specially for.
-// text receives the current time so year-dependent phrasing (e.g. an anniversary
-// count) is computed on the fly instead of hardcoded.
-type specialDate struct {
-	month time.Month
-	day   int
-	text  func(now time.Time, name string, lang Language) string
-}
-
-// specialDates is George's list of days worth a special greeting. Add more here as needed.
+// lines receives the current time so year-dependent phrasing (e.g. an anniversary
+// count) is computed on the fly, and returns a pool of phrasings for the given
+// language so the greeting varies between calls instead of repeating verbatim.
 //
 // Note: this only handles fixed Gregorian dates. Movable holidays that follow the
 // lunar/Hijri calendar (Idul Fitri, Idul Adha, Nyepi, Imlek, etc.) shift every year
 // and can't be derived from month/day alone - see the references below for how to
 // add those with a small yearly-updated date table or a hijri-calendar library.
+type specialDate struct {
+	month time.Month
+	day   int
+	lines func(now time.Time, name string, lang Language) []string
+}
+
 var specialDates = []specialDate{
-	{time.January, 1, func(now time.Time, name string, lang Language) string {
-		return pick(
-			fmt.Sprintf("Selamat Tahun Baru %d, bro %s! 🎉 Semoga tahun ini makin cuan dan makin jago ngoding.", now.Year(), name),
+	{time.January, 1, func(now time.Time, name string, lang Language) []string {
+		idPool := []string{
+			fmt.Sprintf("Selamat Tahun Baru %d, bro %s! 🎉 Semoga makin cuan dan makin jago ngoding.", now.Year(), name),
+			fmt.Sprintf("Taun baru, semangat baru, bro %s! 🎇 Gas terus di tahun %d ini!", name, now.Year()),
+			fmt.Sprintf("Happy New Year ya bro %s! Gw doain proyek-proyek lo lancar terus sepanjang %d.", name, now.Year()),
+		}
+		enPool := []string{
 			fmt.Sprintf("Happy New Year %d, bro %s! 🎉 Here's to a year of shipping good code.", now.Year(), name),
-			lang,
-		)
+			fmt.Sprintf("New year, new energy, bro %s! 🎇 Let's make %d count.", name, now.Year()),
+			fmt.Sprintf("Happy New Year, %s! Wishing you a smooth %d ahead.", name, now.Year()),
+		}
+		return poolFor(idPool, enPool, lang)
 	}},
-	{time.August, 17, func(now time.Time, name string, lang Language) string {
+	{time.August, 17, func(now time.Time, name string, lang Language) []string {
 		years := now.Year() - 1945
-		return pick(
-			fmt.Sprintf("Selamat Hari Kemerdekaan Indonesia ke-%d, bro %s! 🇮🇩 Merdeka!", years, name),
-			fmt.Sprintf("Happy %dth Indonesian Independence Day, bro %s! 🇮🇩 Merdeka!", years, name),
-			lang,
-		)
+		idPool := []string{
+			fmt.Sprintf("Selamat Hari Kemerdekaan Indonesia ke-%d, bro %s! 🇲🇨 Merdeka!", years, name),
+			fmt.Sprintf("Dirgahayu Indonesia ke-%d, bro %s! 🇲🇨 Semangat merah putih terus ya!", years, name),
+			fmt.Sprintf("17 Agustus lagi nih, bro %s! 🇲🇨 Merdeka yang ke-%d, gas produktif hari ini!", name, years),
+		}
+		enPool := []string{
+			fmt.Sprintf("Happy %dth Indonesian Independence Day, bro %s! 🇲🇨 Merdeka!", years, name),
+			fmt.Sprintf("Cheers to %d years of Indonesian independence, bro %s! 🇲🇨", years, name),
+			fmt.Sprintf("It's August 17th, bro %s! 🇲🇨 Celebrating %d years of independence today.", name, years),
+		}
+		return poolFor(idPool, enPool, lang)
 	}},
-	{time.December, 25, func(now time.Time, name string, lang Language) string {
-		return pick(
+	{time.December, 25, func(now time.Time, name string, lang Language) []string {
+		idPool := []string{
 			fmt.Sprintf("Selamat Natal, bro %s! 🎄 Semoga harinya anget kayak kopi susu.", name),
+			fmt.Sprintf("Met Natal, bro %s! 🎄 Semoga tahun depan makin banyak berkah.", name),
+		}
+		enPool := []string{
 			fmt.Sprintf("Merry Christmas, bro %s! 🎄", name),
-			lang,
-		)
+			fmt.Sprintf("Merry Christmas, %s! Hope it's a warm one. 🎄", name),
+		}
+		return poolFor(idPool, enPool, lang)
 	}},
-	{time.December, 31, func(now time.Time, name string, lang Language) string {
-		return pick(
+	{time.December, 31, func(now time.Time, name string, lang Language) []string {
+		idPool := []string{
 			fmt.Sprintf("Malam tahun baru nih, bro %s! 🎆 Siap-siap liat kembang api.", name),
+			fmt.Sprintf("Detik-detik pergantian tahun, bro %s! 🎆 Udah nyiapin resolusi belum?", name),
+		}
+		enPool := []string{
 			fmt.Sprintf("It's New Year's Eve, bro %s! 🎆 Get ready for the fireworks.", name),
-			lang,
-		)
+			fmt.Sprintf("Counting down to the new year, %s! 🎆 Got your resolutions ready?", name),
+		}
+		return poolFor(idPool, enPool, lang)
 	}},
 }
 
-// specialDateLine returns George's greeting for today if it matches a known special date.
+// specialDateLine returns George's greeting for today if it matches a known holiday.
 func (c Config) specialDateLine(now time.Time) (string, bool) {
 	for _, d := range specialDates {
 		if now.Month() == d.month && now.Day() == d.day {
-			return d.text(now, c.UserName, c.Language), true
+			return randomFrom(d.lines(now, c.UserName, c.Language)), true
 		}
 	}
 	return "", false
-}
-
-// morningQuotes are short pep-talk lines George can pair with a morning greeting.
-var morningQuotesID = []string{
-	"Gas terus bro, hari ini juga bisa produktif kayak kemarin 💪",
-	"Inget, satu commit kecil hari ini lebih baik daripada nol commit selamanya.",
-	"Ngopi dulu, terus kita bantai to-do list hari ini bareng-bareng.",
-	"Bug kemarin udah lewat, hari ini fresh start. Semangat bro!",
-}
-
-var morningQuotesEN = []string{
-	"Let's go bro, today can be just as productive as yesterday 💪",
-	"Remember: one small commit today beats zero commits forever.",
-	"Grab your coffee, then let's crush today's to-do list together.",
-	"Yesterday's bugs are history - fresh start today. You got this!",
-}
-
-// morningQuote picks a random pep-talk line to pair with the morning greeting.
-func (c Config) morningQuote() string {
-	quotes := morningQuotesID
-	if c.Language == English {
-		quotes = morningQuotesEN
-	}
-	return quotes[rand.IntN(len(quotes))]
 }
