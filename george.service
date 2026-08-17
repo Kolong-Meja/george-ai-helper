@@ -1,0 +1,19 @@
+# Contoh systemd --user unit, opsional (bukan wajib untuk skeleton ini jalan).
+# Taruh di ~/.config/systemd/user/george.service lalu:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now george.service
+#
+# Karena pakai --user (bukan system-wide), service ini otomatis mati saat kamu
+# logout / laptop dimatikan — sesuai requirement "George off kalau mesin off".
+
+[Unit]
+Description=George local AI assistant backend (Ollama)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ollama serve
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
