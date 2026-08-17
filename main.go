@@ -11,6 +11,11 @@ import (
 	"github.com/Kolong-Meja/george/internal/router"
 )
 
+// maxHistoryTurns caps how many user+assistant exchanges George keeps in memory
+// during one chat session. Keeps the request sent to Ollama small and fast on an
+// 8GB CPU-only machine instead of growing unbounded the longer you chat.
+const maxHistoryTurns = 12
+
 func main() {
 	cfg := config.Default()
 	args := os.Args[1:]
@@ -29,21 +34,31 @@ func main() {
 		args = args[2:]
 	}
 
-	client := ollama.New(cfg.BaseURL, cfg.Model)
+	client := ollama.New(cfg.BaseURL, cfg.Model, cfg.Temperature, cfg.ContextSize)
 
 	// No remaining args: `george` alone -> greet, then drop into interactive chat.
 	if len(args) == 0 {
-		fmt.Println(cfg.Greeting())
-		chatLoop(cfg, client)
+		greeting := cfg.Greeting()
+		fmt.Println(greeting)
+
+		// Seed history with the persona + the greeting George just gave, so if
+		// you reply to it ("makasih buat ucapannya"), George actually remembers
+		// saying it instead of drawing a blank on the next turn.
+		history := []ollama.Message{
+			{Role: "system", Content: cfg.SystemPrompt()},
+			{Role: "assistant", Content: strings.TrimPrefix(greeting, "George: ")},
+		}
+		chatLoop(cfg, client, history)
 		return
 	}
 
 	// Remaining args present: `george <perintah>` or `hello george <perintah>` -> one-shot.
 	input := strings.Join(args, " ")
-	handleInput(cfg, client, input)
+	history := []ollama.Message{{Role: "system", Content: cfg.SystemPrompt()}}
+	handleInput(cfg, client, history, input)
 }
 
-func chatLoop(cfg config.Config, client *ollama.Client) {
+func chatLoop(cfg config.Config, client *ollama.Client, history []ollama.Message) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
@@ -57,21 +72,47 @@ func chatLoop(cfg config.Config, client *ollama.Client) {
 		if input == "exit" || input == "keluar" {
 			return
 		}
-		handleInput(cfg, client, input)
+		history = handleInput(cfg, client, history, input)
 	}
 }
 
-func handleInput(cfg config.Config, client *ollama.Client, input string) {
-	// Deterministic commands (file search, etc.) skip the LLM entirely.
-	if res := router.TryHandle(input, cfg); res.Handled { // <- tambah `cfg` di sini
+// handleInput processes one turn and returns the updated history so the caller's
+// next call keeps the full conversation. Deterministic commands (file search, etc.)
+// still skip the LLM entirely, but their exchange is now recorded too, so a later
+// LLM call still has the full picture of what's already been said.
+func handleInput(cfg config.Config, client *ollama.Client, history []ollama.Message, input string) []ollama.Message {
+	if res := router.TryHandle(input, cfg); res.Handled {
 		fmt.Println("George:", res.Output)
-		return
+		return trimHistory(append(history,
+			ollama.Message{Role: "user", Content: input},
+			ollama.Message{Role: "assistant", Content: res.Output},
+		))
 	}
 
-	reply, err := client.Generate(input, cfg.SystemPrompt())
+	history = append(history, ollama.Message{Role: "user", Content: input})
+
+	reply, err := client.Chat(trimHistory(history))
 	if err != nil {
-		fmt.Println("George: Maaf tuan, ada masalah menghubungi model AI:", err)
-		return
+		fmt.Println("George: Waduh bro, ada masalah nyambungin ke model AI:", err)
+		// Drop the user turn we just added - it never got a real reply, so keeping
+		// it would duplicate the input if you retry.
+		return history[:len(history)-1]
 	}
+
 	fmt.Println("George:", reply)
+	return trimHistory(append(history, ollama.Message{Role: "assistant", Content: reply}))
+}
+
+// trimHistory keeps the system message plus only the most recent maxHistoryTurns
+// exchanges, so the request sent to Ollama stays small and fast no matter how long
+// the chat session runs.
+func trimHistory(history []ollama.Message) []ollama.Message {
+	maxLen := 1 + maxHistoryTurns*2 // system message + (user, assistant) per turn
+	if len(history) <= maxLen {
+		return history
+	}
+	trimmed := make([]ollama.Message, 0, maxLen)
+	trimmed = append(trimmed, history[0])
+	trimmed = append(trimmed, history[len(history)-(maxLen-1):]...)
+	return trimmed
 }

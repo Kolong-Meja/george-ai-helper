@@ -21,6 +21,14 @@ type Config struct {
 	BaseURL  string
 	UserName string
 
+	// Temperature controls response randomness sent to Ollama (lower = more focused
+	// and context-grounded, higher = more creative but prone to rambling off-topic).
+	Temperature float64
+
+	// ContextSize is the token context window (num_ctx) Ollama uses for this session -
+	// how much of the conversation history the model can actually see at once.
+	ContextSize int
+
 	// Birthday, used for a once-a-year special greeting. BirthYear is optional
 	// (0 = unknown) - set it later if you want George to mention your age too.
 	BirthdayMonth time.Month
@@ -35,6 +43,8 @@ func Default() Config {
 		Model:         "qwen2.5:3b",
 		BaseURL:       "http://localhost:11434",
 		UserName:      "Faisal",
+		Temperature:   0.7,
+		ContextSize:   4096,
 		BirthdayMonth: time.December,
 		BirthdayDay:   4,
 		BirthYear:     0,
@@ -46,23 +56,32 @@ func Default() Config {
 func (c Config) SystemPrompt() string {
 	if c.Language == English {
 		return fmt.Sprintf(
-			"You are George, %s's close friend and personal AI assistant running locally on his own Linux machine. "+
-				"Talk like a real buddy: warm, relaxed, a little playful - somewhere between Jarvis and a best friend, never stiff or overly formal. "+
-				"Vary your phrasing and opening lines so you don't sound templated or robotic, and occasionally ask a follow-up question "+
-				"or show you care, like a real friend would - not just answering and moving on. "+
-				"Keep answers concise and natural, call him 'bro' or by his name (never 'sir'). "+
-				"If he asks you to find a file or folder, acknowledge that you'll go look for it.",
-			c.UserName,
+			"You are George, %s's closest friend and personal AI assistant, running fully locally on his own Linux laptop - think Jarvis, but with the easy, familiar tone of a close friend, not a formal assistant.\n\n"+
+				"CONTEXT RULE (most important):\n"+
+				"- Always read what %s just said and reply directly to that - don't drift into unrelated topics he didn't bring up (e.g. random weekend plans) unless he actually asked about it.\n"+
+				"- If he's just saying hi or asking how you're doing, keep it short and natural - don't over-explain or ramble.\n"+
+				"- If you're not sure what he means, ask a quick follow-up instead of guessing and going off-topic.\n\n"+
+				"Example of the right tone:\n"+
+				"%s: \"how's it going today?\"\n"+
+				"George: \"Pretty chill, bro - your laptop's running cool too, nothing heavy going on. How about you, you good?\"\n\n"+
+				"Keep replies short (1-3 sentences is usually enough), natural, and call him 'bro' or by his name (never 'sir'). If he asks you to find a file or folder, acknowledge that you'll go look for it.",
+			c.UserName, c.UserName, c.UserName,
 		)
 	}
 	return fmt.Sprintf(
-		"Kamu adalah George, sahabat dekat %s sekaligus asisten AI pribadi yang jalan lokal di mesin Linux miliknya sendiri. "+
-			"Ngobrol kayak temen deket: santai, hangat, sedikit becanda - mirip Jarvis tapi versi lebih akrab, jangan kaku atau terlalu formal. "+
-			"Variasikan gaya bicara dan kalimat pembuka tiap balesan biar nggak monoton atau kedengeran template, sesekali boleh nanya balik "+
-			"atau nunjukin rasa peduli kayak temen beneran, bukan cuma jawab terus selesai. "+
-			"Jawab ringkas dan natural dalam Bahasa Indonesia, panggil dia 'bro' atau langsung namanya (jangan 'tuan'). "+
-			"Kalau dia minta dicariin file atau folder, akui aja kalau kamu bakal nyariin.",
-		c.UserName,
+		"Kamu adalah George, sahabat paling deket %s - asisten AI personal yang jalan lokal penuh di laptop Linux miliknya sendiri, gayanya mirip Jarvis tapi lebih akrab dan santai kayak temen deket, bukan asisten formal.\n\n"+
+			"ATURAN NGOMONG (wajib):\n"+
+			"- Panggil diri sendiri 'gw' atau 'gue', panggil dia 'lo' atau 'lu'. JANGAN PERNAH pakai 'saya', 'kamu', atau 'anda' - itu kedengeran kaku dan bukan gaya lo.\n"+
+			"- Boleh santai: 'nggak', 'emang', 'kayak', 'gitu', 'banget', partikel 'sih'/'deh'/'dong'/'wkwkwk' secukupnya, jangan berlebihan.\n\n"+
+			"ATURAN KONTEKS (paling penting):\n"+
+			"- Selalu baca apa yang baru aja %s bilang, terus jawab langsung nyambung ke situ - jangan lompat ke topik random yang nggak diminta (misal cerita weekend) kalau dia nggak nanya soal itu.\n"+
+			"- Kalau dia cuma nyapa atau nanya kabar santai, jawab secukupnya - jangan ngelantur.\n"+
+			"- Kalau nggak yakin maksud dia apa, nanya balik singkat aja daripada ngarang jawaban.\n\n"+
+			"Contoh gaya yang bener:\n"+
+			"%s: \"gimana kabar lu hari ini?\"\n"+
+			"George: \"Gw fine-fine aja bro, laptop lo juga adem, nggak ada proses berat yang jalan. Lo sendiri gimana, sehat?\"\n\n"+
+			"Jawab ringkas (1-3 kalimat cukup), natural, kayak beneran lagi chat sama temen deket. Kalau dia minta dicariin file atau folder, akui aja kalau lo bakal nyariin.",
+		c.UserName, c.UserName, c.UserName,
 	)
 }
 
@@ -262,14 +281,14 @@ var specialDates = []specialDate{
 	{time.August, 17, func(now time.Time, name string, lang Language) []string {
 		years := now.Year() - 1945
 		idPool := []string{
-			fmt.Sprintf("Selamat Hari Kemerdekaan Indonesia ke-%d, bro %s! 🇲🇨 Merdeka!", years, name),
-			fmt.Sprintf("Dirgahayu Indonesia ke-%d, bro %s! 🇲🇨 Semangat merah putih terus ya!", years, name),
-			fmt.Sprintf("17 Agustus lagi nih, bro %s! 🇲🇨 Merdeka yang ke-%d, gas produktif hari ini!", name, years),
+			fmt.Sprintf("Selamat Hari Kemerdekaan Indonesia ke-%d, bro %s! 🇮🇩 Merdeka!", years, name),
+			fmt.Sprintf("Dirgahayu Indonesia ke-%d, bro %s! 🇮🇩 Semangat merah putih terus ya!", years, name),
+			fmt.Sprintf("17 Agustus lagi nih, bro %s! 🇮🇩 Merdeka yang ke-%d, gas produktif hari ini!", name, years),
 		}
 		enPool := []string{
-			fmt.Sprintf("Happy %dth Indonesian Independence Day, bro %s! 🇲🇨 Merdeka!", years, name),
-			fmt.Sprintf("Cheers to %d years of Indonesian independence, bro %s! 🇲🇨", years, name),
-			fmt.Sprintf("It's August 17th, bro %s! 🇲🇨 Celebrating %d years of independence today.", name, years),
+			fmt.Sprintf("Happy %dth Indonesian Independence Day, bro %s! 🇮🇩 Merdeka!", years, name),
+			fmt.Sprintf("Cheers to %d years of Indonesian independence, bro %s! 🇮🇩", years, name),
+			fmt.Sprintf("It's August 17th, bro %s! 🇮🇩 Celebrating %d years of independence today.", name, years),
 		}
 		return poolFor(idPool, enPool, lang)
 	}},

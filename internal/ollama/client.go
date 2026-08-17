@@ -13,41 +13,64 @@ import (
 
 // Client talks to a local Ollama instance.
 type Client struct {
-	BaseURL string
-	Model   string
-	HTTP    *http.Client
+	BaseURL     string
+	Model       string
+	Temperature float64
+	NumCtx      int
+	HTTP        *http.Client
 }
 
-// New creates a client pointed at baseURL (e.g. "http://localhost:11434") using the given model tag.
-func New(baseURL, model string) *Client {
+// New creates a client pointed at baseURL (e.g. "http://localhost:11434") using the
+// given model tag. temperature controls response randomness (lower = more focused/
+// context-grounded, higher = more creative but prone to rambling off-topic); numCtx
+// sets the context window in tokens - how much of the conversation George can see at once.
+func New(baseURL, model string, temperature float64, numCtx int) *Client {
 	return &Client{
-		BaseURL: baseURL,
-		Model:   model,
-		HTTP:    &http.Client{Timeout: 60 * time.Second},
+		BaseURL:     baseURL,
+		Model:       model,
+		Temperature: temperature,
+		NumCtx:      numCtx,
+		HTTP:        &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
-type generateRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	System string `json:"system,omitempty"`
-	Stream bool   `json:"stream"`
+// Message is one turn in a conversation, following Ollama's /api/chat role convention.
+type Message struct {
+	Role    string `json:"role"` // "system", "user", or "assistant"
+	Content string `json:"content"`
 }
 
-type generateResponse struct {
-	Response string `json:"response"`
-	Done     bool   `json:"done"`
+type chatOptions struct {
+	Temperature float64 `json:"temperature"`
+	NumCtx      int     `json:"num_ctx"`
 }
 
-// Generate sends prompt + system persona to Ollama and returns the model's reply.
-// Stream is disabled for simplicity; swap to streaming later if you want George to
-// print tokens as they arrive instead of waiting for the full response.
-func (c *Client) Generate(prompt, system string) (string, error) {
-	reqBody := generateRequest{
-		Model:  c.Model,
-		Prompt: prompt,
-		System: system,
-		Stream: false,
+type chatRequest struct {
+	Model    string      `json:"model"`
+	Messages []Message   `json:"messages"`
+	Stream   bool        `json:"stream"`
+	Options  chatOptions `json:"options"`
+}
+
+type chatResponse struct {
+	Message Message `json:"message"`
+	Done    bool    `json:"done"`
+}
+
+// Chat sends the full conversation (system persona + everything said so far + the
+// newest user message) to Ollama's /api/chat endpoint. This matters for two reasons:
+// it applies qwen2.5's own chat template correctly (better quality than hand-rolling
+// prompt text), and it's what actually gives George memory within a session - without
+// history, every reply is generated blind, with zero idea what was just talked about.
+func (c *Client) Chat(messages []Message) (string, error) {
+	reqBody := chatRequest{
+		Model:    c.Model,
+		Messages: messages,
+		Stream:   false,
+		Options: chatOptions{
+			Temperature: c.Temperature,
+			NumCtx:      c.NumCtx,
+		},
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -55,7 +78,7 @@ func (c *Client) Generate(prompt, system string) (string, error) {
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := c.HTTP.Post(c.BaseURL+"/api/generate", "application/json", bytes.NewReader(data))
+	resp, err := c.HTTP.Post(c.BaseURL+"/api/chat", "application/json", bytes.NewReader(data))
 	if err != nil {
 		return "", fmt.Errorf("call ollama (is it running? try: ollama serve): %w", err)
 	}
@@ -70,10 +93,10 @@ func (c *Client) Generate(prompt, system string) (string, error) {
 		return "", fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var out generateResponse
+	var out chatResponse
 	if err := json.Unmarshal(body, &out); err != nil {
 		return "", fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return out.Response, nil
+	return out.Message.Content, nil
 }
