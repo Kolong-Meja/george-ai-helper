@@ -3,6 +3,7 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -86,16 +87,34 @@ func hasNearbyNegation(before string) bool {
 // searchFile looks for a file/folder by name under $HOME.
 // Swap "/home" for a narrower root, or make it configurable, once you know which
 // directories you actually want George searching.
+// searchFile looks for a file/folder by name under $HOME.
 func searchFile(name string, cfg config.Config) string {
 	out, err := exec.Command("find", "/home", "-iname", name).Output()
-	if err != nil {
+	lines := strings.TrimSpace(string(out))
+
+	// find(1) exits non-zero the moment it can't descend into ANY subdirectory
+	// while walking the tree - another user's home folder, ~/.cache, ~/.var app
+	// sandboxes, etc. That's routine and near-universal under /home, and it's an
+	// *exec.ExitError: find still ran and reported whatever it legitimately could,
+	// it just also hit something it wasn't allowed to open. That says nothing about
+	// whether the target file exists, so it must never be treated as a search
+	// failure - not when a match still came through on stdout (the original bug:
+	// Output() keeps the matched bytes even on a non-zero exit, but the old code
+	// discarded them anyway), and not when nothing matched either (still just means
+	// "not found," not "broken").
+	//
+	// A real failure is when the *find command itself* couldn't run at all - e.g.
+	// the binary is missing from PATH. That surfaces as a different error type
+	// (*exec.Error, not *exec.ExitError), so it's the only case that still reaches
+	// the hard-error message below.
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
 		if cfg.Language == config.English {
 			return fmt.Sprintf("Couldn't search for '%s', bro: %v", name, err)
 		}
 		return fmt.Sprintf("Gagal nyari '%s' nih bro: %v", name, err)
 	}
 
-	lines := strings.TrimSpace(string(out))
 	if lines == "" {
 		if cfg.Language == config.English {
 			return fmt.Sprintf("Couldn't find anything named '%s', bro %s.", name, cfg.UserName)
