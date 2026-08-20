@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+// defaultNumPredict / defaultKeepAlive are the package's fallback values, used
+// whenever a Client is built via New() and its NumPredict/KeepAlive fields are
+// left at their zero value.
+//
+//   - defaultNumPredict caps how many tokens a single reply may generate. The
+//     persona prompt already asks for 1-3 sentences, but nothing previously
+//     stopped the model from ignoring that and rambling - and on a CPU-only 3B
+//     model, generation time scales directly with output length, so an
+//     unbounded reply is an unbounded wait. 220 tokens is comfortably more than
+//     a normal reply needs, so real answers won't get cut short, but a
+//     worst-case runaway is now capped instead of open-ended.
+//
+//   - defaultKeepAlive tells Ollama how long to keep the model resident in
+//     memory after a reply. Ollama's own default is 5 minutes; a normal George
+//     session can easily have gaps longer than that between turns while you're
+//     reading or typing, and reloading a model from disk is a big chunk of the
+//     "5-6 minutes" wait when it happens mid-conversation instead of only once.
+const (
+	defaultNumPredict = 220
+	defaultKeepAlive  = "30m"
+)
+
 // Client talks to a local Ollama instance.
 type Client struct {
 	BaseURL     string
@@ -18,6 +40,15 @@ type Client struct {
 	Temperature float64
 	NumCtx      int
 	HTTP        *http.Client
+
+	// NumPredict overrides defaultNumPredict when non-zero. Left unset (0) by
+	// New(), so existing callers get the default automatically.
+	NumPredict int
+
+	// KeepAlive overrides defaultKeepAlive when non-empty, using Ollama's
+	// duration string format (e.g. "10m", "1h"). Left unset ("") by New(), so
+	// existing callers get the default automatically.
+	KeepAlive string
 }
 
 // New creates a client pointed at baseURL (e.g. "http://localhost:11434") using the
@@ -43,13 +74,15 @@ type Message struct {
 type chatOptions struct {
 	Temperature float64 `json:"temperature"`
 	NumCtx      int     `json:"num_ctx"`
+	NumPredict  int     `json:"num_predict"`
 }
 
 type chatRequest struct {
-	Model    string      `json:"model"`
-	Messages []Message   `json:"messages"`
-	Stream   bool        `json:"stream"`
-	Options  chatOptions `json:"options"`
+	Model     string      `json:"model"`
+	Messages  []Message   `json:"messages"`
+	Stream    bool        `json:"stream"`
+	KeepAlive string      `json:"keep_alive"`
+	Options   chatOptions `json:"options"`
 }
 
 type chatResponse struct {
@@ -63,13 +96,24 @@ type chatResponse struct {
 // prompt text), and it's what actually gives George memory within a session - without
 // history, every reply is generated blind, with zero idea what was just talked about.
 func (c *Client) Chat(messages []Message) (string, error) {
+	numPredict := c.NumPredict
+	if numPredict == 0 {
+		numPredict = defaultNumPredict
+	}
+	keepAlive := c.KeepAlive
+	if keepAlive == "" {
+		keepAlive = defaultKeepAlive
+	}
+
 	reqBody := chatRequest{
-		Model:    c.Model,
-		Messages: messages,
-		Stream:   false,
+		Model:     c.Model,
+		Messages:  messages,
+		Stream:    false,
+		KeepAlive: keepAlive,
 		Options: chatOptions{
 			Temperature: c.Temperature,
 			NumCtx:      c.NumCtx,
+			NumPredict:  numPredict,
 		},
 	}
 
