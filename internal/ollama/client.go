@@ -31,6 +31,20 @@ import (
 const (
 	defaultNumPredict = 220
 	defaultKeepAlive  = "30m"
+
+	// defaultTopP narrows sampling slightly below Ollama's own default (0.9).
+	// The long tail of low-probability tokens is exactly where hallucinated
+	// slang words tend to come from on a model that's less fluent in casual
+	// Jakarta Indonesian than in formal registers - trimming that tail costs
+	// almost nothing in naturalness but cuts down on nonsense word chains.
+	defaultTopP = 0.85
+
+	// defaultRepeatPenalty is a mild bump over Ollama's default (1.1). The
+	// gibberish in George's closing replies reads like repetition-driven
+	// degeneration (e.g. "Kelar kali ya? Jalan-jalannnya."); a slightly
+	// stronger penalty discourages the model from looping into that kind of
+	// filler without being aggressive enough to force unnatural phrasing.
+	defaultRepeatPenalty = 1.15
 )
 
 // Client talks to a local Ollama instance.
@@ -49,6 +63,12 @@ type Client struct {
 	// duration string format (e.g. "10m", "1h"). Left unset ("") by New(), so
 	// existing callers get the default automatically.
 	KeepAlive string
+
+	// TopP overrides defaultTopP when non-zero.
+	TopP float64
+
+	// RepeatPenalty overrides defaultRepeatPenalty when non-zero.
+	RepeatPenalty float64
 }
 
 // New creates a client pointed at baseURL (e.g. "http://localhost:11434") using the
@@ -72,9 +92,11 @@ type Message struct {
 }
 
 type chatOptions struct {
-	Temperature float64 `json:"temperature"`
-	NumCtx      int     `json:"num_ctx"`
-	NumPredict  int     `json:"num_predict"`
+	Temperature   float64 `json:"temperature"`
+	NumCtx        int     `json:"num_ctx"`
+	NumPredict    int     `json:"num_predict"`
+	TopP          float64 `json:"top_p"`
+	RepeatPenalty float64 `json:"repeat_penalty"`
 }
 
 type chatRequest struct {
@@ -104,6 +126,14 @@ func (c *Client) Chat(messages []Message) (string, error) {
 	if keepAlive == "" {
 		keepAlive = defaultKeepAlive
 	}
+	topP := c.TopP
+	if topP == 0 {
+		topP = defaultTopP
+	}
+	repeatPenalty := c.RepeatPenalty
+	if repeatPenalty == 0 {
+		repeatPenalty = defaultRepeatPenalty
+	}
 
 	reqBody := chatRequest{
 		Model:     c.Model,
@@ -111,9 +141,11 @@ func (c *Client) Chat(messages []Message) (string, error) {
 		Stream:    false,
 		KeepAlive: keepAlive,
 		Options: chatOptions{
-			Temperature: c.Temperature,
-			NumCtx:      c.NumCtx,
-			NumPredict:  numPredict,
+			Temperature:   c.Temperature,
+			NumCtx:        c.NumCtx,
+			NumPredict:    numPredict,
+			TopP:          topP,
+			RepeatPenalty: repeatPenalty,
 		},
 	}
 

@@ -86,6 +86,17 @@ var excludeDirs = []string{
 	".local/share/Steam/steamapps/compatdata",
 }
 
+// thanksPattern matches expressions of thanks/appreciation or wrapping up a
+// conversation - "makasih", "thanks", "terima kasih", etc.
+var thanksPattern = regexp.MustCompile(
+	`(?i)\b(makasih|mksh|thanks?|thx|terima\s*kasih|tengkyu|tengkiu)\b`,
+)
+
+// maxClosingWords caps how long a message can be and still count as "just a
+// closing remark" instead of a real question/statement that happens to
+// mention thanks along the way.
+const maxClosingWords = 12
+
 // searchTimeout bounds how long a single file/folder search may run. With
 // excludeDirs pruning heavy trees this should normally finish in well under a
 // second, but the timeout is a hard backstop so an unusual directory structure
@@ -110,10 +121,11 @@ type Result struct {
 // cfg is used only to keep George's tone (language + name) consistent with the rest
 // of the app - it does not change which patterns match or how they're handled.
 func TryHandle(input string, cfg config.Config) Result {
-	loc := searchPattern.FindStringSubmatchIndex(input)
-	if loc == nil {
-		return Result{Handled: false}
+	if isClosingRemark(input) {
+		return Result{Handled: true, Output: cfg.ClosingReply()}
 	}
+
+	loc := searchPattern.FindStringSubmatchIndex(input)
 
 	// A negation word in the few words right before the match means the user is
 	// declining a search, not requesting one - fall through to the LLM instead.
@@ -148,6 +160,22 @@ func hasNearbyNegation(before string) bool {
 		}
 	}
 	return false
+}
+
+// isClosingRemark reports whether input is *just* a thank-you/sign-off,
+// rather than a real question that happens to include "makasih"/"thanks"
+// (e.g. "makasih ya, tapi gimana caranya X?"). Two conservative heuristics:
+// a question mark means there's still something to actually answer, and
+// anything past maxClosingWords is more likely to carry real content than
+// to be a pure sign-off.
+func isClosingRemark(input string) bool {
+	if !thanksPattern.MatchString(input) {
+		return false
+	}
+	if strings.Contains(input, "?") {
+		return false
+	}
+	return len(strings.Fields(input)) <= maxClosingWords
 }
 
 // searchFile looks for a file (findType "f") or folder (findType "d") named
