@@ -71,6 +71,16 @@ type Client struct {
 	RepeatPenalty float64
 }
 
+// ChatOverrides carries per-call adjustments to Chat, layered on top of the
+// Client's own defaults. The zero value changes nothing - passing no override at
+// all, or a bare ChatOverrides{}, behaves exactly like before this type existed.
+type ChatOverrides struct {
+	// NumPredict overrides both the Client's NumPredict and defaultNumPredict for
+	// this call only, when non-zero - e.g. router.WantsDetail matched, so this one
+	// reply is allowed to run longer than George's usual short answers.
+	NumPredict int
+}
+
 // New creates a client pointed at baseURL (e.g. "http://localhost:11434") using the
 // given model tag. temperature controls response randomness (lower = more focused/
 // context-grounded, higher = more creative but prone to rambling off-topic); numCtx
@@ -117,10 +127,13 @@ type chatResponse struct {
 // it applies qwen2.5's own chat template correctly (better quality than hand-rolling
 // prompt text), and it's what actually gives George memory within a session - without
 // history, every reply is generated blind, with zero idea what was just talked about.
-func (c *Client) Chat(messages []Message) (string, error) {
+func (c *Client) Chat(messages []Message, overrides ...ChatOverrides) (string, error) {
 	numPredict := c.NumPredict
 	if numPredict == 0 {
 		numPredict = defaultNumPredict
+	}
+	if len(overrides) > 0 && overrides[0].NumPredict != 0 {
+		numPredict = overrides[0].NumPredict
 	}
 	keepAlive := c.KeepAlive
 	if keepAlive == "" {

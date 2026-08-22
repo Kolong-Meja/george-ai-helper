@@ -9,12 +9,20 @@ import (
 	"github.com/Kolong-Meja/george/internal/config"
 	"github.com/Kolong-Meja/george/internal/ollama"
 	"github.com/Kolong-Meja/george/internal/router"
+	"github.com/Kolong-Meja/george/internal/ui"
 )
 
 // maxHistoryTurns caps how many user+assistant exchanges George keeps in memory
 // during one chat session. Keeps the request sent to Ollama small and fast on an
 // 8GB CPU-only machine instead of growing unbounded the longer you chat.
 const maxHistoryTurns = 12
+
+// detailNumPredict raises the token budget for one-off replies where the user
+// explicitly asked for a detailed/thorough answer (router.WantsDetail). Left at
+// defaultNumPredict (220) the rest of the time so ordinary chat stays fast on an
+// 8GB CPU-only machine - this override only kicks in on request, so the extra
+// generation time is something the user opted into, not an ambient slowdown.
+const detailNumPredict = 480
 
 func main() {
 	cfg := config.Default()
@@ -82,7 +90,7 @@ func chatLoop(cfg config.Config, client *ollama.Client, history []ollama.Message
 // LLM call still has the full picture of what's already been said.
 func handleInput(cfg config.Config, client *ollama.Client, history []ollama.Message, input string) []ollama.Message {
 	if res := router.TryHandle(input, cfg); res.Handled {
-		fmt.Println("George:", res.Output)
+		ui.PrintReply(input, res.Output)
 		return trimHistory(append(history,
 			ollama.Message{Role: "user", Content: input},
 			ollama.Message{Role: "assistant", Content: res.Output},
@@ -91,16 +99,37 @@ func handleInput(cfg config.Config, client *ollama.Client, history []ollama.Mess
 
 	history = append(history, ollama.Message{Role: "user", Content: input})
 
-	reply, err := client.Chat(trimHistory(history))
+	callMessages := trimHistory(history)
+	var overrides ollama.ChatOverrides
+	if router.WantsDetail(input) {
+		overrides.NumPredict = detailNumPredict
+		callMessages = withDetailHint(callMessages, cfg)
+	}
+
+	reply, err := client.Chat(callMessages, overrides)
 	if err != nil {
 		fmt.Println("George: Waduh bro, ada masalah nyambungin ke model AI:", err)
-		// Drop the user turn we just added - it never got a real reply, so keeping
-		// it would duplicate the input if you retry.
 		return history[:len(history)-1]
 	}
 
-	fmt.Println("George:", reply)
+	ui.PrintReply(input, reply)
 	return trimHistory(append(history, ollama.Message{Role: "assistant", Content: reply}))
+}
+
+// withDetailHint returns a COPY of messages with a one-turn instruction appended to
+// the latest message's content. It never mutates messages in place - that slice can
+// share its backing array with the persisted history (see trimHistory), so writing
+// into it directly would leak the hint text into every future turn too.
+func withDetailHint(messages []ollama.Message, cfg config.Config) []ollama.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+	augmented := make([]ollama.Message, len(messages))
+	copy(augmented, messages)
+	last := augmented[len(augmented)-1]
+	last.Content = last.Content + "\n\n" + cfg.DetailHint()
+	augmented[len(augmented)-1] = last
+	return augmented
 }
 
 // trimHistory keeps the system message plus only the most recent maxHistoryTurns

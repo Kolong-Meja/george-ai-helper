@@ -1,5 +1,7 @@
 // Package router handles deterministic commands (like file search) without
-// calling the LLM at all — faster and lighter on an 8GB CPU-only machine.
+// calling the LLM at all — faster and lighter on an 8GB CPU-only machine. It also
+// exposes small regex-based classifiers (like WantsDetail) that main.go uses to
+// tune how the LLM is called, without the LLM itself needing to infer intent.
 package router
 
 import (
@@ -91,6 +93,23 @@ var excludeDirs = []string{
 var thanksPattern = regexp.MustCompile(
 	`(?i)\b(makasih|mksh|thanks?|thx|terima\s*kasih|tengkyu|tengkiu)\b`,
 )
+
+// detailPattern matches phrasing that explicitly asks for a longer, more thorough
+// answer instead of George's default 1-3 sentence reply - e.g. "jelasin dengan
+// detail", "tolong lebih rinci", "in detail", "elaborate", "secara mendalam".
+var detailPattern = regexp.MustCompile(
+	`(?i)\b(detail(?:nya|in)?|detil|rinci|mendalam|selengkap(?:nya)?|lengkap(?:nya)?|` +
+		`panjang\s*lebar|elaborate|comprehensive|thoroughly|in[\s-]?depth)\b`,
+)
+
+// WantsDetail reports whether input explicitly asks George for a longer, more
+// thorough explanation. main.go uses this to raise the token budget and inject a
+// one-turn instruction override for that message only - the persistent system
+// prompt keeps defaulting to short replies otherwise, which is what keeps normal
+// chat fast and on-topic.
+func WantsDetail(input string) bool {
+	return detailPattern.MatchString(input)
+}
 
 // maxClosingWords caps how long a message can be and still count as "just a
 // closing remark" instead of a real question/statement that happens to
