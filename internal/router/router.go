@@ -126,6 +126,9 @@ func TryHandle(input string, cfg config.Config) Result {
 	}
 
 	loc := searchPattern.FindStringSubmatchIndex(input)
+	if loc == nil {
+		return Result{Handled: false}
+	}
 
 	// A negation word in the few words right before the match means the user is
 	// declining a search, not requesting one - fall through to the LLM instead.
