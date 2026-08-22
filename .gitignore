@@ -1,0 +1,26 @@
+# --- Build output -------------------------------------------------------
+# `go build -o george .` (lihat README) naro binary hasil compile di root repo.
+/george
+/george.exe
+
+# --- Secrets / local config ----------------------------------------------
+# Value asli tinggal di sini - lihat .env.example buat templatenya.
+# JANGAN commit file ini - inilah yang bikin clone/fork bebas dari identitas kamu.
+.env
+.env.*
+!.env.example
+
+# --- Go tooling -----------------------------------------------------------
+*.test
+*.prof
+*.pprof
+
+# --- Editor / IDE ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS noise ---------------------------------------------------------------
+.DS_Store
+Thumbs.db

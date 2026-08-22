@@ -40,6 +40,19 @@ george halo, lagi ngapain?
 george --lang en how are you doing?
 ```
 
+## Konfigurasi personal (.env)
+
+George baca nama & tanggal ulang tahun kamu dari `.env` (bukan hardcode di
+source), biar aman kalau repo ini di-clone/fork orang lain.
+
+```bash
+cp .env.example .env      # atau: cp .env.example ~/.config/george/.env
+```
+
+Lalu isi `GEORGE_USER_NAME`, `GEORGE_BIRTHDAY_MONTH`, `GEORGE_BIRTHDAY_DAY` di
+file itu. Tanpa `.env`, George tetep jalan normal - cuma pakai nama placeholder
+dan fitur ucapan ulang tahun otomatis nonaktif.
+
 ## Supaya "hello george" juga bisa dipanggil
 
 Karena shell motong per kata, `hello george` itu artinya command `hello` dengan

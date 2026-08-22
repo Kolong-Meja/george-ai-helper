@@ -37,17 +37,25 @@ type Config struct {
 }
 
 // Default returns George's default configuration: Bahasa Indonesia, qwen2.5:3b, local Ollama.
+// UserName and birthday come from environment variables (GEORGE_USER_NAME,
+// GEORGE_BIRTHDAY_MONTH, GEORGE_BIRTHDAY_DAY, GEORGE_BIRTH_YEAR), loaded from a
+// local .env file if one exists (see .env.example and dotEnvCandidates). This
+// keeps personal info out of source control entirely: clone this repo without
+// setting up .env and George still runs fine, just with a neutral placeholder
+// name and no birthday greeting.
 func Default() Config {
+	loadDotEnv()
+
 	return Config{
 		Language:      Indonesian,
 		Model:         "qwen2.5:3b",
 		BaseURL:       "http://localhost:11434",
-		UserName:      "Faisal",
+		UserName:      envOr("GEORGE_USER_NAME", "Sob"),
 		Temperature:   0.6, // turun dari 0.7 - biar George lebih grounded, nggak gampang ngelantur ke topik nggak nyambung
 		ContextSize:   4096,
-		BirthdayMonth: time.December,
-		BirthdayDay:   4,
-		BirthYear:     0,
+		BirthdayMonth: time.Month(envInt("GEORGE_BIRTHDAY_MONTH", 0)),
+		BirthdayDay:   envInt("GEORGE_BIRTHDAY_DAY", 0),
+		BirthYear:     envInt("GEORGE_BIRTH_YEAR", 0),
 	}
 }
 
