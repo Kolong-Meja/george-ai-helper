@@ -144,14 +144,12 @@ func TryHandle(input string, cfg config.Config) Result {
 		return Result{Handled: true, Output: cfg.ClosingReply()}
 	}
 
-	loc := searchPattern.FindStringSubmatchIndex(input)
-	if loc == nil {
-		return Result{Handled: false}
+	if res, matched := tryOpenApp(input, cfg); matched {
+		return res
 	}
 
-	// A negation word in the few words right before the match means the user is
-	// declining a search, not requesting one - fall through to the LLM instead.
-	if hasNearbyNegation(input[:loc[0]]) {
+	loc := searchPattern.FindStringSubmatchIndex(input)
+	if loc == nil {
 		return Result{Handled: false}
 	}
 

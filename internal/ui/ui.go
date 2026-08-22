@@ -120,6 +120,7 @@ var emojiRules = []struct {
 	{regexp.MustCompile(`(?i)\b(makan|lapar|laper|kenyang|dinner|lunch)\b`), "🍽️"},
 	{regexp.MustCompile(`(?i)\b(negara|dunia|indonesia|amerika|sejarah|geografi|country)\b`), "🌍"},
 	{regexp.MustCompile(`\?`), "🤔"},
+	{regexp.MustCompile(`(?i)\b(buka(?:in)?|jalanin|nyalain|vscode|chrome|firefox|spotify|beekeeper|steam)\b`), "🚀"},
 }
 
 func pickEmoji(text string) string {
